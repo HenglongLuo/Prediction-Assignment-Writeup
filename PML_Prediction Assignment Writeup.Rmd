@@ -1,0 +1,159 @@
+---
+html_document: default
+author: "Henglong Luo"
+date: "Aug 30, 2018"
+title: "Prediction Assignment Writeup"
+---
+This file is created for the final report of the Peer Assessment project of Coursera¡¯s MOOC Practical Machine Learning from Johns Hopkins University. 
+
+The scripts have been solely produced, tested and executed on i386-w64-mingw32/i386 (32-bit), and R Version 3.4.3.
+
+# Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement ¨C a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: (http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+# Data
+The training data for this project are available here:
+
+(https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+The test data are available here:
+
+(https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+The data for this project come from this source: (http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har). If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+# Load and Clean Data 
+## Install Packages and Upload Libraries
+To complete the analysis, I  uploaded libraries as follows. Note: if you have ready installed the packages before, you do not need to re-install. It will be fine to just upload libraries; on the contrary, if you have not installed, before uploading libraries, run **install.packages("name of package")** to install. 
+```{r echo=FALSE}
+library(knitr)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(rmarkdown)
+library(corrplot)
+```
+## Load data 
+``` {r}
+rm(list=ls())    #clean global environment
+dirin <- getwd() #get current working directory. If you put the downloaded data and the R script file in the same folder, you can import data directly like this
+UrlTrain <- read.csv("pml-training.csv")  #import training data from files downloaded and saved in computer
+UrlTest  <- read.csv("pml-testing.csv")   #import testing  data from files downloaded and saved in computer
+dim(UrlTrain);dim(UrlTest)
+```
+##Split training set into myTraining set and myTesting set
+The testing data set containing 20 cases, which was named as UrlTest, is to test the finally selected model. To select the optimal model, we need to split training data set, which was named as UrlTrain into two sets, one for modeling and the other for validting. I named them as myTraining and myTesting respectively.
+```{r}
+inTrain <- createDataPartition(y=UrlTrain$classe, p=0.7, list=FALSE)
+myTraining <- UrlTrain[inTrain, ]
+myTesting  <- UrlTrain[-inTrain, ]
+dim(myTraining)
+dim(myTesting)
+```
+##Clean data
+Results of the previous steps show there are 160 variables, with 159 predictors and 1 variable to predict. For the 159 predictors, many of them are not meaningful in modeling either becase there are lots of NA in the variables or because they are the Near Zero variance (NZV) variables. Meanwhile, the first five variables are identifers, which should not have predictability either. Thus, I remove these variables by the following steps.  
+```{r}
+NZV <- nearZeroVar(myTraining)
+myTraining <- myTraining[, -NZV] # remove Near Zeor variance Variables
+myTesting  <- myTesting[, -NZV] # remove Near Zeor variance Variables
+AllNA      <- sapply(myTraining, function(x) mean(is.na(x))) > 0.95
+myTraining <- myTraining[, AllNA==FALSE] # Remove NA variables
+myTesting  <- myTesting[, AllNA==FALSE] # Remove NA variables
+myTraining <- myTraining[, -(1:5)] #Remove the variables for identification (Column 1 to 5)
+myTesting  <- myTesting[, -(1:5)] #Remove the variables for identification (Column 1 to 5)
+dim(myTraining)
+dim(myTesting)
+```
+#Correlation Analysis
+Here I attempt to explore the correlation between predictors. If there is high correlation, data preprocessing, in particular Principal Components Analysis (PCA), may be required. 
+
+```{r}
+corMatrix <- cor(myTraining[, -54]) #create correlation matrix including all predictors
+par(mar=c(1,1,1,1))                 #set layout parameters for plotting
+corrplot(corMatrix, order = "hclust" , type = "upper",tl.cex = 0.5) #plot the correlation
+```
+The plot shows there exists high correlation between some variables, indicated by dark colours. I further confirm this by identifying the specific variables.
+```{r}
+M <- abs(corMatrix)
+diag(M) <-0
+which(M >.9,arr.ind = T) # variables with high correlation.
+```
+Thus, I will use PCA to conduct data preprocessing for each modeling method and compare the accuracy between model without PCA and model with PCA.
+
+#Prediction models
+##Random Forest
+```{r}
+set.seed(12345)
+controlRF          <- trainControl(method="cv", number=3, verboseIter=FALSE)
+modFitRandForest   <- train(classe ~ ., data=myTraining, method="rf", trControl=controlRF)
+modFitRandForestPC <- train(classe ~ ., method="rf",preProcess="pca", data=myTraining, trControl=controlRF)
+modFitRandForest$finalModel
+modFitRandForestPC$finalModel
+```
+
+###prediction on myTesting set
+```{r}
+predictRandForest   <- predict(modFitRandForest  , newdata=myTesting)
+predictRandForestPC <- predict(modFitRandForestPC, newdata=myTesting)
+confMatRandForest   <- confusionMatrix(predictRandForest  , myTesting$classe)
+confMatRandForestPC <- confusionMatrix(predictRandForestPC, myTesting$classe)
+confMatRandForest
+confMatRandForestPC
+```
+
+##Decision Tree
+```{r}
+set.seed(12345)
+modFitDecTree   <- train(classe ~ ., data=myTraining, method="rpart")
+modFitDecTreePC <- train(classe ~ ., method="rpart", preProcess="pca", data=myTraining)
+fancyRpartPlot(modFitDecTree$finalModel)
+fancyRpartPlot(modFitDecTreePC$finalModel)
+modFitDecTree$finalModel
+modFitDecTreePC$finalModel
+```
+###Prediction on myTesting set
+```{r}
+predictDecTree   <- predict(modFitDecTree  , newdata=myTesting)
+predictDecTreePC <- predict(modFitDecTreePC, newdata=myTesting)
+confMatDecTree   <- confusionMatrix(predictDecTree  , myTesting$classe)
+confMatDecTreePC <- confusionMatrix(predictDecTreePC, myTesting$classe)
+confMatDecTree
+confMatDecTreePC
+```
+
+
+##Generalized Boosted Model
+```{r}
+set.seed(12345)
+controlGBM   <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+modFitGBM    <- train(classe ~ ., data=myTraining, method = "gbm",
+                    trControl = controlGBM, verbose = FALSE)
+modFitGBMPC  <- train(classe ~ ., data=myTraining, method = "gbm",preProcess="pca",
+                    trControl = controlGBM, verbose = FALSE)
+modFitGBM$finalModel
+modFitGBMPC$finalModel
+```
+###Prediction on myTesting set
+```{r}
+predictGBM    <- predict(modFitGBM  , newdata=myTesting)
+predictGBMPC  <- predict(modFitGBMPC, newdata=myTesting)
+confMatGBM    <- confusionMatrix(predictGBM  , myTesting$classe)
+confMatGBMPC  <- confusionMatrix(predictGBMPC, myTesting$classe)
+confMatGBM
+confMatGBMPC
+```
+
+#Select the optimal model
+Based on the accuracy in previous confusion matrices, we can see that for a given modeling method, model without PCA is better than with PCA. By comparing models without PCA in the three methods, Random Forest has the highest accuracy. Thus, **the model generated by Random Forest without PCA** is selected to predict the 20-case testing set.
+
+#Apply the optimal model to the 20-case testing set
+```{r}
+predictOPTIMAL  <- predict(modFitRandForest, newdata=UrlTest)
+predictOPTIMAL
+```
+Thus, we got the predictions by applying our optimal model to the testing set.
+
